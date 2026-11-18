@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# local settings (per-user: last link, delay, playlist)
+config.json
+
+# build output - the exe goes to Releases, not into the repository
+build/
+dist/
+*.spec
+*.exe
