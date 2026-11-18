@@ -39,8 +39,8 @@ python -m venv .venv
 3. Use the **Volume** slider to match the radio's loudness to the TV; it applies while playing and is
    remembered.
 4. Arrow keys fine-tune: ← → 0.5 s, ↑ ↓ 5 s.
-5. `+ Add` saves the current link with a name; `Remove` deletes the selected station. Both are stored in
-   `config.json`.
+5. `+ Add` opens a form where you type the station's name and stream link; `Edit` changes the selected
+   station (name or link), `Remove` deletes it. Everything is stored in `config.json`.
 
 How it works: ffmpeg (bundled with the app) decodes the stream into raw PCM held in a 4-minute ring
 buffer; playback reads from a point N seconds behind the newest audio. Nothing is re-encoded and the

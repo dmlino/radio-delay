@@ -19,7 +19,7 @@ import time
 import tkinter as tk
 from collections import deque
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 
 import numpy as np
 import sounddevice as sd
@@ -510,9 +510,10 @@ class RadioDelayApp:
 
         buttons = ttk.Frame(playlist)
         buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Button(buttons, text="Play", width=7, command=self._play_selected).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(buttons, text="+ Add", width=7, command=self._add_favorite).grid(row=0, column=1, padx=(0, 6))
-        ttk.Button(buttons, text="Remove", width=8, command=self._remove_favorite).grid(row=0, column=2)
+        ttk.Button(buttons, text="Play", width=6, command=self._play_selected).grid(row=0, column=0, padx=(0, 4))
+        ttk.Button(buttons, text="+ Add", width=6, command=self._add_favorite).grid(row=0, column=1, padx=(0, 4))
+        ttk.Button(buttons, text="Edit", width=6, command=self._edit_favorite).grid(row=0, column=2, padx=(0, 4))
+        ttk.Button(buttons, text="Remove", width=8, command=self._remove_favorite).grid(row=0, column=3)
 
         for key, step in (("<Left>", -0.5), ("<Right>", 0.5), ("<Up>", 5.0), ("<Down>", -5.0)):
             self.root.bind(key, lambda _event, s=step: self._key_nudge(s))
@@ -664,32 +665,112 @@ class RadioDelayApp:
             self._stop()
         self._start()
 
-    def _add_favorite(self) -> None:
-        url = self.url.get().strip()
-        if not url:
-            self._set_status("Paste or pick a stream link first, then add it.", "error")
-            return
-        existing = next((fav for fav in self.favorites if fav["url"] == url), None)
-        name = simpledialog.askstring(
-            "Add to playlist",
-            "Name for this station:",
-            initialvalue=existing["name"] if existing else self._suggest_name(url),
-            parent=self.root,
-        )
-        if name is None:
-            return
-        name = name.strip() or self._suggest_name(url)
-        if existing is None:
-            self.favorites.append({"name": name, "url": url})
-        else:
-            existing["name"] = name
-        self._refresh_favorites()
-        index = self.favorites.index(existing) if existing else len(self.favorites) - 1
+    def _ask_station(self, title: str, name: str = "", url: str = "") -> tuple[str, str] | None:
+        """Modal form for one station: returns (name, url), or None when cancelled."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        body = ttk.Frame(dialog, padding=16)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+
+        name_var = tk.StringVar(value=name)
+        url_var = tk.StringVar(value=url)
+
+        ttk.Label(body, text="Station name").grid(row=0, column=0, sticky="w")
+        name_entry = ttk.Entry(body, textvariable=name_var, width=46, font=("Segoe UI", 10))
+        name_entry.grid(row=1, column=0, sticky="ew", pady=(2, 12))
+
+        ttk.Label(body, text="Stream link").grid(row=2, column=0, sticky="w")
+        url_entry = ttk.Entry(body, textvariable=url_var, width=46, font=("Segoe UI", 10))
+        url_entry.grid(row=3, column=0, sticky="ew", pady=(2, 14))
+
+        answer: list[tuple[str, str]] = []
+
+        def confirm(_event=None) -> None:
+            answer.append((name_var.get().strip(), url_var.get().strip()))
+            dialog.destroy()
+
+        def cancel(_event=None) -> None:
+            dialog.destroy()
+
+        actions = ttk.Frame(body)
+        actions.grid(row=4, column=0, sticky="e")
+        ttk.Button(actions, text="Cancel", command=cancel).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(actions, text="Save", command=confirm).grid(row=0, column=1)
+
+        dialog.bind("<Return>", confirm)
+        dialog.bind("<Escape>", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 3
+        dialog.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        name_entry.focus_set()
+
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+        return answer[0] if answer else None
+
+    def _select_index(self, index: int) -> None:
         self.fav_list.selection_clear(0, "end")
-        self.fav_list.selection_set(index)
-        self.fav_list.see(index)
+        if 0 <= index < self.fav_list.size():
+            self.fav_list.selection_set(index)
+            self.fav_list.see(index)
+
+    def _add_favorite(self) -> None:
+        answer = self._ask_station("Add a station", "", self.url.get().strip())
+        if answer is None:
+            return
+        name, url = answer
+        if not url:
+            self._set_status("A station needs a stream link.", "error")
+            return
+        name = name or self._suggest_name(url)
+        existing = next((fav for fav in self.favorites if fav["url"] == url), None)
+        if existing is not None:
+            existing["name"] = name
+            self._refresh_favorites()
+            self._select_index(self.favorites.index(existing))
+            self._save_config()
+            self._set_status(f"That link was already saved - renamed it to '{name}'.", "ok")
+            return
+        self.favorites.append({"name": name, "url": url})
+        self._refresh_favorites()
+        self._select_index(len(self.favorites) - 1)
         self._save_config()
-        self._set_status(f"Saved '{name}' in the playlist.", "ok")
+        self._set_status(f"Added '{name}' to the playlist.", "ok")
+
+    def _edit_favorite(self) -> None:
+        fav = self._selected_favorite()
+        if fav is None:
+            self._set_status("Select a station to edit it.", "error")
+            return
+        answer = self._ask_station("Edit station", fav["name"], fav["url"])
+        if answer is None:
+            return
+        name, url = answer
+        if not url:
+            self._set_status("A station needs a stream link.", "error")
+            return
+        name = name or self._suggest_name(url)
+        clash = next((item for item in self.favorites if item is not fav and item["url"] == url), None)
+        if clash is not None:
+            self._set_status(f"'{clash['name']}' already uses that link.", "error")
+            return
+        index = self.favorites.index(fav)
+        was_current = self.url.get().strip() == fav["url"]
+        fav["name"] = name
+        fav["url"] = url
+        if was_current:
+            self.url.set(url)
+        self._refresh_favorites()
+        self._select_index(index)
+        self._save_config()
+        self._set_status(f"Updated '{name}'.", "ok")
 
     def _remove_favorite(self) -> None:
         fav = self._selected_favorite()
